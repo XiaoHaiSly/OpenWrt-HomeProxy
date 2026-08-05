@@ -3163,7 +3163,7 @@ msgstr "打开面板失败：%s"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js:191
 msgid "Core only"
-msgstr "仅核心"
+msgstr "核心模式"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js:217
 msgid "Core config file"
