@@ -31,7 +31,7 @@ config homeproxy 'config'
 	option routing_mode 'bypass_mainland_china'
 	option routing_port 'common'
 	option proxy_mode 'redirect_tproxy'
-	option ipv6_support '1'
+	option ipv6_support '0'
 	option github_token ''
 	option log_level 'warn'
 
