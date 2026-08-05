@@ -331,10 +331,6 @@ msgstr "证书路径"
 msgid "Clash API"
 msgstr "Clash API"
 
-#: htdocs/luci-static/resources/view/homeproxy/client.js:164
-msgid "Dashboard"
-msgstr "面板"
-
 #: htdocs/luci-static/resources/view/homeproxy/client.js:184
 msgid "More than one dashboard is configured. Choose which one to open:"
 msgstr "检测到配置了多个面板，请选择要打开的一个："
