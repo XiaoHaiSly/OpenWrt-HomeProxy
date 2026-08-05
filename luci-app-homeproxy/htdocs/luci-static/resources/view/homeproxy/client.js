@@ -151,22 +151,51 @@ function openDashboard() {
 	 *     "type": "api", using separate "listen"/"listen_port" fields
 	 *   - legacy: "experimental.clash_api.external_controller" as a
 	 *     combined "host:port" string
-	 * Check both so it doesn't matter which one the config uses. */
-	function extractApiConfig(conf) {
+	 * Check both, and collect ALL of them - a config can perfectly well
+	 * define both at once (e.g. a "services" api entry running
+	 * sing-box-dashboard on one port, plus a legacy clash_api running
+	 * zashboard on another), in which case the user gets to pick. */
+	function extractApiConfigs(conf) {
+		let configs = [];
+
 		if (Array.isArray(conf?.services)) {
 			for (let svc of conf.services) {
-				if (svc && svc.type === 'api' && svc.listen_port)
-					return { port: svc.listen_port, secret: svc.secret };
+				if (svc && svc.type === 'api' && svc.listen_port) {
+					let label = (svc.dashboard && svc.dashboard.path) || _('Dashboard');
+					configs.push({ port: svc.listen_port, secret: svc.secret, label: `${label} (:${svc.listen_port})` });
+				}
 			}
 		}
 
 		const clash = conf?.experimental?.clash_api;
 		if (clash && clash.external_controller) {
 			const port = clash.external_controller.substring(clash.external_controller.lastIndexOf(':') + 1);
-			return { port: port, secret: clash.secret };
+			let label = clash.external_ui || _('Clash API');
+			configs.push({ port: port, secret: clash.secret, label: `${label} (:${port})` });
 		}
 
-		return null;
+		return configs;
+	}
+
+	/* Shows a small picker modal when more than one dashboard/API is
+	 * configured, so the user can choose which one to open. */
+	function pickDashboard(apis) {
+		ui.showModal(_('Open dashboard'), [
+			E('p', _('More than one dashboard is configured. Choose which one to open:')),
+			E('div', { 'class': 'cbi-section' },
+				apis.map((api) => E('button', {
+					'class': 'btn cbi-button cbi-button-action',
+					'style': 'display:block; width:100%; margin-bottom:.5em;',
+					'click': () => {
+						ui.hideModal();
+						openDashboardUrl(api.port, api.secret);
+					}
+				}, [api.label]))
+			),
+			E('div', { 'class': 'right' },
+				E('button', { 'class': 'btn', 'click': ui.hideModal }, _('Cancel'))
+			)
+		]);
 	}
 
 	function openFromConfig(content) {
@@ -177,8 +206,8 @@ function openDashboard() {
 			throw _('Failed to parse the core config file as JSON.');
 		}
 
-		const api = extractApiConfig(conf);
-		if (!api) {
+		const apis = extractApiConfigs(conf);
+		if (apis.length === 0) {
 			/* Not a real error - this core config just doesn't have a
 			 * dashboard/API set up. Treat it the same as clicking a
 			 * disabled control: no popup, just let the caller give the
@@ -188,7 +217,10 @@ function openDashboard() {
 			throw err;
 		}
 
-		openDashboardUrl(api.port, api.secret);
+		if (apis.length === 1)
+			openDashboardUrl(apis[0].port, apis[0].secret);
+		else
+			pickDashboard(apis);
 	}
 
 	/* The init script writes the exact config sing-box was launched
@@ -508,7 +540,7 @@ return view.extend({
 		o.depends({'main_node': /^((?!core_only).)+$/});
 
 		o = s.taboption('routing', form.Flag, 'ipv6_support', _('IPv6 support'));
-		o.default = o.enabled;
+		o.default = o.disabled;
 		o.rmempty = false;
 		o.depends({'main_node': /^((?!core_only).)+$/});
 
