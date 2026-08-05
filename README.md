@@ -1,5 +1,3 @@
-# HomeProxy
-
 ## 主要增强
 
 - 增加 Core Only 核心模式，支持独立运行 sing-box 核心
