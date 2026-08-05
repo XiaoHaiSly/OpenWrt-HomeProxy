@@ -333,7 +333,7 @@ msgstr "Clash API"
 
 #: htdocs/luci-static/resources/view/homeproxy/client.js:184
 msgid "More than one dashboard is configured. Choose which one to open:"
-msgstr "检测到配置了多个面板，请选择要打开的一个："
+msgstr "检测到配置了多个面板，请选择要打开的面板："
 
 #: htdocs/luci-static/resources/view/homeproxy/status.js:57
 msgid "Check"
