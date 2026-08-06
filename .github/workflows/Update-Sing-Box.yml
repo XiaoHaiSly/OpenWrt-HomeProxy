@@ -41,7 +41,7 @@ jobs:
 
           # 仅获取正式版 Release
           # 跳过 Beta / Alpha / RC 等预发布版本
-          upstream_tag="$(gh api 'repos/SagerNet/sing-box/releases?per_page=30' \
+          upstream_tag="$(gh api 'repos/reF1nd/sing-box/releases?per_page=30' \
             --jq '[.[] | select(.draft == false and .prerelease == false)][0].tag_name')"
 
           [[ "$upstream_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.]+)?$ ]]
@@ -71,7 +71,7 @@ jobs:
           archive="$RUNNER_TEMP/sing-box.tar.gz"
 
           curl -fL --retry 3 \
-            "https://codeload.github.com/SagerNet/sing-box/tar.gz/$UPSTREAM_TAG" \
+            "https://codeload.github.com/reF1nd/sing-box/tar.gz/$UPSTREAM_TAG" \
             -o "$archive"
 
           tar -tzf "$archive" >/dev/null
