@@ -5,15 +5,22 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=sing-box
-PKG_UPSTREAM_VERSION:=testing
-PKG_VERSION:=testing
+# reF1nd/sing-box (reF1nd-testing branch) 快照版本
+# 上游对应 1.14.0-beta.5,commit 115dbec2cd676e13e9dba7f6e23b932608ace339
+PKG_UPSTREAM_VERSION:=1.14.0-beta.5-reF1nd
+PKG_VERSION:=1.14.0-beta.5-reF1nd
 PKG_RELEASE:=1
 
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_UPSTREAM_VERSION).tar.gz
-PKG_SOURCE_URL:=https://codeload.github.com/reF1nd/sing-box/tar.gz/testing?
-# PKG_HASH needs to be updated after the first download of the reF1nd/testing source archive.
-PKG_HASH:=skip
-PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_UPSTREAM_VERSION)
+# 改为通过 git 拉取 reF1nd 的 fork,而不是官方 SagerNet 的 tar.gz
+# 因为 reF1nd-testing 分支持续滚动更新、没有稳定的发布 tar.gz 哈希可核对，
+# 这里用具体 commit 锁定版本，保证可复现构建。
+PKG_SOURCE_URL:=https://github.com/reF1nd/sing-box.git
+PKG_SOURCE_PROTO:=git
+PKG_SOURCE_VERSION:=115dbec2cd676e13e9dba7f6e23b932608ace339
+PKG_SOURCE_DATE:=2026-08-03
+PKG_SOURCE:=$(PKG_NAME)-$(PKG_SOURCE_VERSION).tar.gz
+PKG_MIRROR_HASH:=skip
+PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_SOURCE_VERSION)
 
 PKG_LICENSE:=GPL-3.0-or-later
 PKG_LICENSE_FILES:=LICENSE
@@ -31,12 +38,16 @@ PKG_CONFIG_DEPENDS:= \
 	CONFIG_SING_BOX_TINY_BUILD_TAILSCALE \
 	CONFIG_SING_BOX_TINY_BUILD_UTLS \
 	CONFIG_SING_BOX_TINY_BUILD_V2RAY_API \
-	CONFIG_SING_BOX_TINY_BUILD_WIREGUARD
+	CONFIG_SING_BOX_TINY_BUILD_WIREGUARD \
+	CONFIG_SING_BOX_TINY_BUILD_NAIVE_OUTBOUND \
+	CONFIG_SING_BOX_TINY_BUILD_CLOUDFLARED
 
 PKG_BUILD_DEPENDS:=golang/host
 PKG_BUILD_PARALLEL:=1
 PKG_BUILD_FLAGS:=no-mips16
 
+# reF1nd 的 fork 没有改 go.mod 的 module path，仍然是 sagernet/sing-box，
+# 所以 GO_PKG / import 路径不需要改。
 GO_PKG:=github.com/sagernet/sing-box
 GO_PKG_BUILD_PKG:=$(GO_PKG)/cmd/sing-box
 GO_PKG_LDFLAGS_X:=$(GO_PKG)/constant.Version=$(PKG_UPSTREAM_VERSION)
@@ -48,8 +59,8 @@ define Package/sing-box/Default
   SECTION:=net
   CATEGORY:=Network
   SUBMENU:=Web Servers/Proxies
-  TITLE:=The universal proxy platform
-  URL:=https://sing-box.sagernet.org/
+  TITLE:=The universal proxy platform (reF1nd testing)
+  URL:=https://github.com/reF1nd/sing-box
   DEPENDS:=+ca-bundle +kmod-inet-diag
   USERID:=sing-box=5566:sing-box=5566
 endef
@@ -66,6 +77,12 @@ endef
 define Package/sing-box/description
   Sing-box is a universal proxy platform which supports hysteria, SOCKS, Shadowsocks,
   ShadowTLS, Tor, trojan, VLess, VMess, WireGuard and so on.
+  This build is based on the reF1nd/sing-box fork (reF1nd-testing branch), which tracks
+  upstream sing-box pre-release versions plus extra outbound/inbound features.
+
+  NOTE: The upstream reF1nd fork ships two optional build tags, with_ccm and with_ocm,
+  which read local Claude Code / OpenAI Codex OAuth credentials and re-expose them over
+  HTTP. This package intentionally does NOT enable those tags.
 endef
 
 define Package/sing-box/config
@@ -128,11 +145,19 @@ define Package/sing-box-tiny/config
     config SING_BOX_TINY_BUILD_WIREGUARD
     bool "Build with WireGuard support"
     default y if aarch64||arm||i386||x86_64
+
+    config SING_BOX_TINY_BUILD_NAIVE_OUTBOUND
+    bool "Build with NaiveProxy outbound support (reF1nd)"
+    default y
+
+    config SING_BOX_TINY_BUILD_CLOUDFLARED
+    bool "Build with Cloudflare Tunnel inbound support (reF1nd)"
   endif
 endef
 
+# 注意：故意不提供 with_ccm / with_ocm 的开关，理由见上方 description。
 ifeq ($(BUILD_VARIANT),full)
-  GO_PKG_TAGS:=with_acme,with_clash_api,with_dhcp,with_gvisor,with_quic,with_tailscale,with_utls,with_wireguard,with_ccm,with_ocm,with_cloudflared,with_naive_outbound,with_usbip,with_openvpn,with_openconnect,badlinkname,tfogo_checklinkname0
+  GO_PKG_TAGS:=with_acme,with_clash_api,with_dhcp,with_gvisor,with_quic,with_tailscale,with_utls,with_wireguard,with_naive_outbound,badlinkname,tfogo_checklinkname0
 else
   GO_PKG_TAGS:=$(subst $(space),$(comma),$(strip \
 	$(if $(CONFIG_SING_BOX_TINY_BUILD_ACME),with_acme) \
@@ -146,6 +171,9 @@ else
 	$(if $(CONFIG_SING_BOX_TINY_BUILD_UTLS),with_utls) \
 	$(if $(CONFIG_SING_BOX_TINY_BUILD_V2RAY_API),with_v2ray_api) \
 	$(if $(CONFIG_SING_BOX_TINY_BUILD_WIREGUARD),with_wireguard) \
+	$(if $(CONFIG_SING_BOX_TINY_BUILD_NAIVE_OUTBOUND),with_naive_outbound) \
+	$(if $(CONFIG_SING_BOX_TINY_BUILD_CLOUDFLARED),with_cloudflared) \
+	badlinkname tfogo_checklinkname0 \
   ))
 endif
 
