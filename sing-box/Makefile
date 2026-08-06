@@ -5,13 +5,14 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=sing-box
-PKG_UPSTREAM_VERSION:=1.13.16
-PKG_VERSION:=1.13.16
+PKG_UPSTREAM_VERSION:=testing
+PKG_VERSION:=testing
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_UPSTREAM_VERSION).tar.gz
-PKG_SOURCE_URL:=https://codeload.github.com/SagerNet/sing-box/tar.gz/v$(PKG_UPSTREAM_VERSION)?
-PKG_HASH:=5d8201669387d0caded7a22c71682b3c025afef7bac8704cceabed52ea8bde5d
+PKG_SOURCE_URL:=https://codeload.github.com/reF1nd/sing-box/tar.gz/testing?
+# PKG_HASH needs to be updated after the first download of the reF1nd/testing source archive.
+PKG_HASH:=skip
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_UPSTREAM_VERSION)
 
 PKG_LICENSE:=GPL-3.0-or-later
@@ -131,7 +132,7 @@ define Package/sing-box-tiny/config
 endef
 
 ifeq ($(BUILD_VARIANT),full)
-  GO_PKG_TAGS:=with_acme,with_clash_api,with_dhcp,with_gvisor,with_quic,with_tailscale,with_utls,with_wireguard
+  GO_PKG_TAGS:=with_acme,with_clash_api,with_dhcp,with_gvisor,with_quic,with_tailscale,with_utls,with_wireguard,with_ccm,with_ocm,with_cloudflared,with_naive_outbound,with_usbip,with_openvpn,with_openconnect,badlinkname,tfogo_checklinkname0
 else
   GO_PKG_TAGS:=$(subst $(space),$(comma),$(strip \
 	$(if $(CONFIG_SING_BOX_TINY_BUILD_ACME),with_acme) \
