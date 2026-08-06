@@ -1,0 +1,147 @@
+name: 每日检查并更新 Sing-Box 核心 (reF1nd 分支)
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 中国时间 02:20（错开原版 Update-Sing-Box.yml 的 02:15，避免并发冲突）
+    - cron: '20 18 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: repository-maintenance-ref1nd
+  cancel-in-progress: false
+
+env:
+  # 本 workflow 固定只维护 reF1nd 分支，不动默认分支/原版内核
+  PACKAGE_BRANCH: reF1nd
+
+jobs:
+  update:
+    name: 检查并更新 Sing-Box 核心
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      # 这里用默认分支签出仓库脚本本体（.github/scripts 等），
+      # 因为 schedule 定时触发只会读取默认分支上的 workflow 文件。
+      # 实际内容会在下一步 ci_sync_branch 里切换成 reF1nd 分支。
+      - name: 检出软件包仓库
+        uses: actions/checkout@main
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: 同步 reF1nd 分支
+        run: |
+          source .github/scripts/ci-common.sh
+          ci_sync_branch "$PACKAGE_BRANCH"
+
+      - name: 检查 reF1nd/sing-box testing 分支最新提交
+        id: upstream
+        run: |
+          makefile='sing-box/Makefile'
+
+          # 直接跟踪 reF1nd/sing-box 仓库的 reF1nd-testing 分支最新 commit
+          # （这个分支没有稳定发布 tag，滚动更新，所以不走 releases API）
+          commit_json="$(gh api repos/reF1nd/sing-box/commits/reF1nd-testing)"
+
+          new_sha="$(jq -r '.sha' <<<"$commit_json")"
+          new_date="$(jq -r '.commit.committer.date' <<<"$commit_json" | cut -d'T' -f1)"
+
+          [[ "$new_sha" =~ ^[0-9a-f]{40}$ ]]
+
+          current_sha="$(sed -n 's/^PKG_SOURCE_VERSION:=//p' "$makefile")"
+
+          changed=true
+          if [[ "$current_sha" == "$new_sha" ]]; then
+            changed=false
+            echo "sing-box 已是 reF1nd-testing 最新提交：$new_sha"
+          fi
+
+          {
+            echo "changed=$changed"
+            echo "sha=$new_sha"
+            echo "date=$new_date"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 拉取对应 commit 的 changelog 版本号
+        if: steps.upstream.outputs.changed == 'true'
+        id: version
+        env:
+          NEW_SHA: ${{ steps.upstream.outputs.sha }}
+        run: |
+          changelog="$(curl -fsSL --retry 3 \
+            "https://raw.githubusercontent.com/reF1nd/sing-box/$NEW_SHA/docs/changelog.md")"
+
+          # changelog 第一条 "#### x.y.z" 即为当前版本号
+          base_version="$(grep -m1 -oP '^####\s+\K[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?' <<<"$changelog")"
+
+          if [[ -z "$base_version" ]]; then
+            printf '无法从 changelog 解析版本号\n' >&2
+            exit 1
+          fi
+
+          upstream_version="${base_version}-reF1nd"
+
+          {
+            echo "version=$upstream_version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 校验 Sing-Box 源码可下载
+        if: steps.upstream.outputs.changed == 'true'
+        env:
+          NEW_SHA: ${{ steps.upstream.outputs.sha }}
+        run: |
+          archive="$RUNNER_TEMP/sing-box.tar.gz"
+
+          curl -fL --retry 3 \
+            "https://codeload.github.com/reF1nd/sing-box/tar.gz/$NEW_SHA" \
+            -o "$archive"
+
+          tar -tzf "$archive" >/dev/null
+
+      - name: 更新 Sing-Box 软件包元数据
+        if: steps.upstream.outputs.changed == 'true'
+        env:
+          NEW_SHA: ${{ steps.upstream.outputs.sha }}
+          NEW_DATE: ${{ steps.upstream.outputs.date }}
+          UPSTREAM_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          makefile='sing-box/Makefile'
+
+          sed -i \
+            -e "s/^PKG_UPSTREAM_VERSION:=.*/PKG_UPSTREAM_VERSION:=$UPSTREAM_VERSION/" \
+            -e "s/^PKG_VERSION:=.*/PKG_VERSION:=$UPSTREAM_VERSION/" \
+            -e 's/^PKG_RELEASE:=.*/PKG_RELEASE:=1/' \
+            -e "s/^PKG_SOURCE_VERSION:=.*/PKG_SOURCE_VERSION:=$NEW_SHA/" \
+            -e "s/^PKG_SOURCE_DATE:=.*/PKG_SOURCE_DATE:=$NEW_DATE/" \
+            "$makefile"
+
+          grep -Fx "PKG_UPSTREAM_VERSION:=$UPSTREAM_VERSION" "$makefile"
+          grep -Fx "PKG_VERSION:=$UPSTREAM_VERSION" "$makefile"
+          grep -Fx 'PKG_RELEASE:=1' "$makefile"
+          grep -Fx "PKG_SOURCE_VERSION:=$NEW_SHA" "$makefile"
+          grep -Fx "PKG_SOURCE_DATE:=$NEW_DATE" "$makefile"
+
+          # 安全兜底：确保没人不小心把 with_ccm / with_ocm 加回 GO_PKG_TAGS
+          if grep -q 'with_ccm\|with_ocm' "$makefile"; then
+            printf '检测到 with_ccm/with_ocm 出现在 Makefile 中，已阻止更新，请人工检查\n' >&2
+            exit 1
+          fi
+
+          git diff --check
+
+      - name: 提交 Sing-Box 更新
+        if: steps.upstream.outputs.changed == 'true'
+        env:
+          UPSTREAM_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          source .github/scripts/ci-common.sh
+
+          ci_commit_and_push \
+            "$PACKAGE_BRANCH" \
+            "chore: 更新 Sing-Box (reF1nd-testing) 至 ${UPSTREAM_VERSION}-r1" \
+            sing-box/Makefile
