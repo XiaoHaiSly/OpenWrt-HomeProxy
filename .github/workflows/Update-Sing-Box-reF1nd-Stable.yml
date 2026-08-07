@@ -128,5 +128,5 @@ jobs:
 
           ci_commit_and_push \
             "$PACKAGE_BRANCH" \
-            "chore: 更新 Sing-Box reF1nd至 ${UPSTREAM_VERSION}-r${UPSTREAM_RELEASE} (${UPSTREAM_SOURCE_VERSION})" \
+            "chore: 更新 Sing-Box reF1nd 至 ${UPSTREAM_VERSION}-r${UPSTREAM_RELEASE} (${UPSTREAM_SOURCE_VERSION})" \
             sing-box/Makefile
