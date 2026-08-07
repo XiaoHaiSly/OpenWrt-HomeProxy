@@ -12,9 +12,6 @@ concurrency:
   group: repository-maintenance-reF1nd
   cancel-in-progress: false
 
-env:
-  PACKAGE_BRANCH: main
-
 jobs:
   update:
     name: 检查并更新 Sing-Box reF1nd
@@ -27,9 +24,11 @@ jobs:
         uses: actions/checkout@main
         with:
           fetch-depth: 0
-          ref: ${{ env.PACKAGE_BRANCH }}
+          ref: ${{ github.event.repository.default_branch }}
 
-      - name: 同步分支
+      - name: 同步默认分支
+        env:
+          PACKAGE_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           source .github/scripts/ci-common.sh
           ci_sync_branch "$PACKAGE_BRANCH"
@@ -120,6 +119,7 @@ jobs:
       - name: 提交 Sing-Box reF1nd更新
         if: steps.upstream.outputs.changed == 'true'
         env:
+          PACKAGE_BRANCH: ${{ github.event.repository.default_branch }}
           UPSTREAM_VERSION: ${{ steps.upstream.outputs.version }}
           UPSTREAM_RELEASE: ${{ steps.upstream.outputs.release }}
           UPSTREAM_SOURCE_VERSION: ${{ steps.upstream.outputs.source_version }}
