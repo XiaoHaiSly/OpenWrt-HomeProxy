@@ -1,0 +1,138 @@
+name: Sing-Box reF1nd最新版检查同步
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 23 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: repository-maintenance-reF1nd
+  cancel-in-progress: false
+
+env:
+  PACKAGE_BRANCH: master
+
+jobs:
+  update:
+    name: 检查并更新 Sing-Box reF1nd
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: 检出软件包仓库
+        uses: actions/checkout@main
+        with:
+          fetch-depth: 0
+          ref: ${{ env.PACKAGE_BRANCH }}
+
+      - name: 同步 master 分支
+        run: |
+          source .github/scripts/ci-common.sh
+          ci_sync_branch "$PACKAGE_BRANCH"
+
+      - name: 检查 Sing-Box reF1nd上游版本
+        id: upstream
+        run: |
+          makefile='sing-box/Makefile'
+
+          upstream_tag="$(gh api 'repos/reF1nd/sing-box/tags?per_page=100' \
+            --jq '.[].name' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z]+\.[0-9]+)?-reF1nd(\.[0-9]+)?$' \
+            | sort -V | tail -n1)"
+
+          if [[ -z "$upstream_tag" ]]; then
+            echo "未找到 Sing-Box reF1nd tag" >&2
+            exit 1
+          fi
+
+          if [[ ! "$upstream_tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(-(alpha|beta|rc)\.([0-9]+))?-reF1nd(\.([0-9]+))?$ ]]; then
+            echo "无法解析 tag 格式：$upstream_tag" >&2
+            exit 1
+          fi
+          base_version="${BASH_REMATCH[1]}"
+          pre_type="${BASH_REMATCH[3]}"
+          pre_num="${BASH_REMATCH[4]}"
+          ref_num="${BASH_REMATCH[6]:-1}"
+
+          if [[ -n "$pre_type" ]]; then
+            upstream_version="${base_version}_${pre_type}${pre_num}"
+          else
+            upstream_version="$base_version"
+          fi
+          upstream_release="$ref_num"
+          upstream_source_version="${upstream_tag#v}"
+
+          current_version="$(sed -n 's/^PKG_VERSION:=//p' "$makefile")"
+
+          changed=true
+
+          if [[ "$current_version" == "$upstream_version" ]]; then
+            changed=false
+            echo "Sing-Box 已是最新版：$upstream_version"
+          fi
+
+          {
+            echo "changed=$changed"
+            echo "tag=$upstream_tag"
+            echo "version=$upstream_version"
+            echo "release=$upstream_release"
+            echo "source_version=$upstream_source_version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 下载并校验 Sing-Box reF1nd源码
+        if: steps.upstream.outputs.changed == 'true'
+        id: source
+        env:
+          UPSTREAM_TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          archive="$RUNNER_TEMP/sing-box.tar.gz"
+
+          curl -fL --retry 3 \
+            "https://codeload.github.com/reF1nd/sing-box/tar.gz/$UPSTREAM_TAG" \
+            -o "$archive"
+
+          tar -tzf "$archive" >/dev/null
+
+          echo "hash=$(sha256sum "$archive" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: 更新 Sing-Box reF1nd软件包元数据
+        if: steps.upstream.outputs.changed == 'true'
+        env:
+          SOURCE_HASH: ${{ steps.source.outputs.hash }}
+          UPSTREAM_VERSION: ${{ steps.upstream.outputs.version }}
+          UPSTREAM_RELEASE: ${{ steps.upstream.outputs.release }}
+          UPSTREAM_SOURCE_VERSION: ${{ steps.upstream.outputs.source_version }}
+        run: |
+          makefile='sing-box/Makefile'
+
+          sed -i \
+            -e "s/^PKG_VERSION:=.*/PKG_VERSION:=$UPSTREAM_VERSION/" \
+            -e "s/^PKG_RELEASE:=.*/PKG_RELEASE:=$UPSTREAM_RELEASE/" \
+            -e "s/^PKG_SOURCE_VERSION:=.*/PKG_SOURCE_VERSION:=$UPSTREAM_SOURCE_VERSION/" \
+            -e "s/^PKG_HASH:=.*/PKG_HASH:=$SOURCE_HASH/" \
+            "$makefile"
+
+          grep -Fx "PKG_VERSION:=$UPSTREAM_VERSION" "$makefile"
+          grep -Fx "PKG_RELEASE:=$UPSTREAM_RELEASE" "$makefile"
+          grep -Fx "PKG_SOURCE_VERSION:=$UPSTREAM_SOURCE_VERSION" "$makefile"
+          grep -Fx "PKG_HASH:=$SOURCE_HASH" "$makefile"
+
+          git diff --check
+
+      - name: 提交 Sing-Box reF1nd更新
+        if: steps.upstream.outputs.changed == 'true'
+        env:
+          UPSTREAM_VERSION: ${{ steps.upstream.outputs.version }}
+          UPSTREAM_RELEASE: ${{ steps.upstream.outputs.release }}
+          UPSTREAM_SOURCE_VERSION: ${{ steps.upstream.outputs.source_version }}
+        run: |
+          source .github/scripts/ci-common.sh
+
+          ci_commit_and_push \
+            "$PACKAGE_BRANCH" \
+            "chore: 更新 Sing-Box reF1nd至 ${UPSTREAM_VERSION}-r${UPSTREAM_RELEASE} (${UPSTREAM_SOURCE_VERSION})" \
+            sing-box/Makefile
