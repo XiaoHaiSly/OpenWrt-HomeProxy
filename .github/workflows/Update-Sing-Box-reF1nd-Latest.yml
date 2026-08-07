@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  PACKAGE_BRANCH: master
+  PACKAGE_BRANCH: main
 
 jobs:
   update:
@@ -29,7 +29,7 @@ jobs:
           fetch-depth: 0
           ref: ${{ env.PACKAGE_BRANCH }}
 
-      - name: 同步 master 分支
+      - name: 同步分支
         run: |
           source .github/scripts/ci-common.sh
           ci_sync_branch "$PACKAGE_BRANCH"
