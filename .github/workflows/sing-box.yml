@@ -7,8 +7,8 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build Sing-Box (${{ matrix.platform_name }})
+  build-apk:
+    name: Build Sing-Box APK (${{ matrix.platform_name }})
     runs-on: ubuntu-latest
     timeout-minutes: 360
     strategy:
@@ -31,10 +31,12 @@ jobs:
       SDK_ARCHIVE_PREFIX: ${{ matrix.sdk_prefix }}
 
     steps:
-      - name: Checkout
+      - &step_checkout
+        name: Checkout
         uses: actions/checkout@main
 
-      - name: Install build dependencies
+      - &step_install_deps
+        name: Install build dependencies
         run: |
           sudo apt-get -qq update
           sudo apt-get -qq install --no-install-recommends \
@@ -42,7 +44,8 @@ jobs:
             libelf-dev libncurses-dev libssl-dev python3 python3-setuptools \
             rsync swig time unzip wget xsltproc zip zlib1g-dev zstd
 
-      - name: Locate SDK
+      - &step_locate_sdk
+        name: Locate SDK
         id: sdk
         run: |
           sums_file="$RUNNER_TEMP/immortalwrt-sha256sums"
@@ -63,7 +66,8 @@ jobs:
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
           echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
 
-      - name: Download SDK
+      - &step_download_sdk
+        name: Download SDK
         env:
           SDK_ARCHIVE: ${{ steps.sdk.outputs.archive }}
           SDK_SHA256: ${{ steps.sdk.outputs.sha256 }}
@@ -78,7 +82,8 @@ jobs:
           tar --zstd -xf "$archive" -C "$RUNNER_TEMP/sdk-root"
           echo "SDK_ROOT=$(find "$RUNNER_TEMP/sdk-root" -mindepth 1 -maxdepth 1 -type d -name 'immortalwrt-sdk-*' -print -quit)" >> "$GITHUB_ENV"
 
-      - name: Prepare package
+      - &step_prepare_pkg
+        name: Prepare package
         run: |
           rm -rf "$SDK_ROOT/package/sing-box"
           cp -a sing-box "$SDK_ROOT/package/sing-box"
@@ -101,7 +106,8 @@ jobs:
 
           make -C "$SDK_ROOT" defconfig
 
-      - name: Compile only Sing-Box
+      - &step_compile
+        name: Compile only Sing-Box
         run: |
           make -C "$SDK_ROOT" package/sing-box/clean
           make -C "$SDK_ROOT" -j"$(nproc)" package/sing-box/compile || \
@@ -134,3 +140,111 @@ jobs:
           path: ${{ runner.temp }}/output
           if-no-files-found: error
 
+  build-ipk:
+    name: Build Sing-Box IPK (${{ matrix.platform_name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform_name: ARM64
+            sdk_path: qualcommax/ipq807x
+            sdk_prefix: immortalwrt-sdk-24.10.6-qualcommax-ipq807x_gcc-13.3.0_
+            target: qualcommax
+            subtarget: ipq807x
+          - platform_name: AMD64
+            sdk_path: x86/64
+            sdk_prefix: immortalwrt-sdk-24.10.6-x86-64_gcc-13.3.0_
+            target: x86
+            subtarget: '64'
+
+    env:
+      SDK_BASE_URL: https://downloads.immortalwrt.org/releases/24.10.6/targets/${{ matrix.sdk_path }}
+      SDK_ARCHIVE_PREFIX: ${{ matrix.sdk_prefix }}
+
+    steps:
+      - *step_checkout
+
+      - *step_install_deps
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+
+      - *step_locate_sdk
+
+      - *step_download_sdk
+
+      - *step_prepare_pkg
+
+      - name: Replace OpenWrt Golang
+        run: |
+          cd "$SDK_ROOT"
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          rm -rf feeds/packages/lang/golang
+          git clone --depth=1 -b 26.x https://github.com/sbwml/packages_lang_golang feeds/packages/lang/golang
+          ./scripts/feeds install -f golang
+
+      - name: Configure only Sing-Box
+        run: |
+          cat > "$SDK_ROOT/.config" <<'EOF'
+          CONFIG_TARGET_${{ matrix.target }}=y
+          CONFIG_TARGET_${{ matrix.target }}_${{ matrix.subtarget }}=y
+          CONFIG_TARGET_MULTI_PROFILE=y
+          CONFIG_DEVEL=y
+          CONFIG_BUILD_LOG=y
+          CONFIG_PACKAGE_golang=y
+          CONFIG_PACKAGE_sing-box=m
+          EOF
+          make -C "$SDK_ROOT" defconfig
+
+      - name: Check Golang package
+        run: |
+          echo "=== Golang feed version ==="
+          grep -R "GO_DEFAULT_VERSION" "$SDK_ROOT/feeds/packages/lang/golang" || true
+          echo "=== System Go ==="
+          which go
+          go version
+          echo "=== SDK's staging dir go (if any) ==="
+          find "$SDK_ROOT/staging_dir" -name "go" -type f 2>/dev/null | xargs -r -n1 sh -c 'echo "$1" && $1 version' _ || true
+
+      - *step_compile
+
+      - name: Collect IPK
+        run: |
+          mkdir -p "$RUNNER_TEMP/output"
+          found=0
+          while IFS= read -r -d '' ipk; do
+            control_dir="$(mktemp -d)"
+            (
+              cd "$control_dir" || exit 1
+              if tar -tzf "$ipk" >/dev/null 2>&1; then
+                tar -xzf "$ipk"
+              else
+                ar x "$ipk"
+              fi
+              tar -xzf control.tar.gz 2>/dev/null || true
+            )
+            name="$(awk -F': ' '/^Package:/ { print $2; exit }' "$control_dir/control" 2>/dev/null)"
+            rm -rf "$control_dir"
+            
+            if [[ "$name" == "sing-box" ]]; then
+              cp -p "$ipk" "$RUNNER_TEMP/output/"
+              found=$((found + 1))
+            fi
+          done < <(find "$SDK_ROOT/bin" -type f -name 'sing-box_*.ipk' -print0)
+          
+          [[ "$found" -ge 1 ]]
+          cd "$RUNNER_TEMP/output"
+          sha256sum -- *.ipk > SHA256SUMS
+
+      - name: Upload IPK
+        uses: actions/upload-artifact@main
+        with:
+          name: sing-box-ipk-${{ matrix.platform_name }}
+          path: ${{ runner.temp }}/output
+          if-no-files-found: error
